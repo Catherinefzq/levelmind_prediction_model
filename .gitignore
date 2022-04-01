@@ -1,0 +1,8 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+README.md
+\.html
+dat\
+hub_data_cleaning.R

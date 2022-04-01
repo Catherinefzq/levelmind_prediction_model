@@ -6,7 +6,7 @@ library(factoextra);library(corrplot);library(gtsummary);
 # load data
 load("dat/20210927_2m_clean.rdata")
 var_list <- names(clean_2m_demo)
-rm(list = ls()[(ls() != 'var_list')])
+rm(list = ls()[(ls() != 'out_plot')])
 load("dat/2m_cart_re-validation.rdata")
 ################# validation with 2M users visit 1 year later #################
 raw <- 
@@ -26,8 +26,9 @@ oneyrlater_df <- raw %>%
   rename(no_product = k10_k6_3,
          half_product = k10_k6_4) %>% 
   left_join(., raw_demo, by = "subject_code") %>% 
-  select(var_list)
+  select(all_of(var_list))
 
+df_pre <- data_pre(data = oneyrlater_df)
 theme_gtsummary_journal(journal = "jama", 
                         set_theme = T)
 theme_gtsummary_compact()
@@ -107,14 +108,15 @@ depth_metric %>%
   kableExtra::row_spec(0, bold = T)
 
 ######################### validation with yes data #############################
-yes_bl <- here("dat", "original",
-               "(DONOTTOUCH) HKYES Master Database_12 Jan 2022.xlsx") %>% 
-  readxl::read_excel(sheet = "Total", 
-             range = readxl::cell_cols("A:EHE"),
-             na = c("888","999","-999")) %>% 
-  slice(-1) %>% 
-  janitor::clean_names() %>% 
-  dplyr::select(yes_id, sf12_tot, k6_tot, sds_tot) %>% 
+load("dat/20210927_2m_clean.rdata")
+var_list <- names(clean_2m_demo)
+load("dat/hub_slides_data.rdata")
+rm(list = ls()[!ls() %in% c("df_yes_bl", "df_yes_3m", 
+                            "var_list", "df_2m", "df_2m_demo")])
+load("dat/2m_cart_re-validation.rdata")
+
+yes_bl <- df_yes_bl %>% 
+  filter(exclusion == 0) %>% 
   left_join(., 
             here("dat", "original",
                  "(DONOTTOUCH) HKYES Master Database_12 Jan 2022.xlsx") %>% 
@@ -122,11 +124,10 @@ yes_bl <- here("dat", "original",
               slice(-1) %>% 
               janitor::clean_names() %>% 
               dplyr::select(yes_id, age, sex, edu_yes_no, sds_day),
-            by = "yes_id") %>% 
+            by = c("subject_code" = "yes_id")) %>% 
   mutate_at(names(.)[2:length(names(.))], as.numeric) %>%
-  rename(subject_code = yes_id,
-         `SF-6D` = sf12_tot,
-         K6 = k6_tot) %>% 
+  rename(`SF-6D` = sf6_z_first,
+         K6 = k6_first) %>% 
   #mutate(subject_code = toupper(subject_code)) %>% 
   filter(!subject_code == 0 & !is.na(K6) & !`SF-6D` > 1) %>% 
   group_by(subject_code) %>% 
@@ -134,23 +135,19 @@ yes_bl <- here("dat", "original",
   ungroup() # 3294 one duplicate id, extract the first
 
 yes_3m <- 
-  here("dat", "original",
-       "(DONOTTOUCH) 3mFU Master Database 20220204.xlsx") %>% 
-  readxl::read_excel(sheet = "Raw_FINAL", na = c("888","999","-999")) %>% 
-  slice(-1) %>% 
-  janitor::clean_names() %>% 
-  dplyr::select(yes_id, m3_sds_day) %>% 
+  df_yes_3m %>% 
   left_join(., 
             here("dat", "original",
                  "(DONOTTOUCH) 3mFU Master Database 20220204.xlsx") %>% 
               readxl::read_excel(sheet = "Total", na = c("888","999","-999")) %>% 
               slice(-1) %>% 
               janitor::clean_names(),
-            by = "yes_id") %>% 
+            by = c("subject_code" = "yes_id")) %>% 
+  select(-m3_k6_tot) %>% 
   # sds day 在過去30天中, 你有多少天因這些癥狀而無法上學/工作/處理你的日常生活事務?
   mutate_at(names(.)[2:length(names(.))], as.numeric) %>% 
-  filter(!yes_id == 0 & !is.na(m3_k6_tot)) %>% 
-  rename(subject_code = yes_id) %>% 
+  rename(m3_k6_tot = k6_last) %>% 
+  filter(!subject_code == 0 & !is.na(m3_k6_tot)) %>% 
   #mutate(subject_code = toupper(subject_code)) %>% 
   group_by(subject_code) %>% 
   slice(1) %>% 
@@ -166,19 +163,25 @@ yes_w_cart <- yes_bl %>%
            factor(., levels = c("good", "intermediate1", 
                                 "intermediate2", "poor"))) %>% 
   left_join(., yes_3m, by = "subject_code") %>% 
-  filter(!is.na(m3_k6_tot)) %>% #1535
-  mutate(k6_diff = m3_k6_tot - K6,
-         sds_day_dff = m3_sds_day - sds_day, 
-         sds_diff = m3_sds_tot - sds_tot) 
+  filter(!is.na(m3_k6_tot)) #1535
+  
 
-ls_3m_var <- names(yes_3m)[-1] %>% as.list()
+ls_3m_var <- 
+  names(yes_3m)[grep("k6_tot|phq9|gad7|dass|sds|shai", names(yes_3m))] %>% 
+  as.list()
+
+my_comparisons <- list( c("poor", "intermediate2"), 
+                        c("poor", "intermediate1"), 
+                        c("poor", "good"),
+                        c("intermediate2", "good"),
+                        c("intermediate1", "good"))
 out.plots <- 
   lapply(ls_3m_var, 
          function(var){
            ggviolin(data = yes_w_cart, x = "class", y = var, fill = "class",
-                    title = var, add = "mean_sd") +
+                    title = all_of(var), add = "mean_sd") +
              stat_compare_means(label = "p", method = "wilcox.test",
-                                ref.group = "intermediate1") +
+                                comparisons = my_comparisons) +
              stat_compare_means(label.y = max(yes_w_cart %>% 
                                                 select(var), na.rm = T) + 2) + 
              stat_summary(fun.data = function(x) {
@@ -191,7 +194,7 @@ out.plots <-
          }
   )
 
-out.plots[[18]]
+
 
 merge.out <- 
   function(x){
@@ -201,13 +204,13 @@ merge.out <-
 #merge.out 1:7
 merge.out(26)
 
-lapply(c("k6_diff", "sds_day_dff", "sds_diff"),
-        function(x){
-        gghistogram(data = yes_w_cart, x = x, binwidth = 1) + 
-    scale_x_continuous(n.breaks = 10) 
-  }
-  ) %>% 
-  ggarrange(plotlist = ., ncol = 1)
+#lapply(c("k6_diff", "sds_day_dff", "sds_diff"),
+ #       function(x){
+  #      gghistogram(data = yes_w_cart, x = x, binwidth = 1) + 
+   # scale_x_continuous(n.breaks = 10) 
+  #}
+  #) %>% 
+  #ggarrange(plotlist = ., ncol = 1)
 
 ls_test <- 
   mapply(
@@ -241,14 +244,57 @@ ls_test <-
         }, geom = "text")
       return(list(aov, p))
     },
-    x = c("K6", "sds_tot", "sds_day"),
-    y = c("m3_k6_tot", "m3_sds_tot", "m3_sds_day"))
+    x = c("K6"),
+    y = c("m3_k6_tot"))
 
 ls_test[2,]
 
-check <- yes_w_cart %>% filter(class == "poor") %>% select(subject_code, K6, m3_k6_tot) %>% 
-  filter(m3_k6_tot > 15)
+#### df 2m 
+df_2m_plot <- df_2m %>% 
+  filter(subject_code %in% df_2m_demo$subject_code) %>% 
+  arrange(subject_code, submit_time) %>% 
+  group_by(subject_code) %>%
+  mutate(K6 = first(k6_score),
+         `SF-6D` = first(sf6_z)) %>% 
+  slice(n()) %>% 
+  ungroup() %>% 
+  mutate(pred = round(predict(fit, .), 2),
+         class = case_when(pred == -2.16 ~ "poor",
+                           pred == -0.75 ~ "intermediate2",
+                           pred == -0.21 ~ "intermediate1",
+                           pred == 0.94 ~ "good") %>% 
+           factor(., levels = c("good", "intermediate1", 
+                                "intermediate2", "poor"))) %>% 
+  rename("first" = K6, "last" = k6_score) %>% 
+  pivot_longer(c("first", "last"),
+               names_to = "visit",
+               values_to = "score")
 
+# mixed anova
+aov <- anova_test(data = df_2m_plot, dv = score,
+                  wid = subject_code, between = class,
+                  within = visit)
+
+#p <- ggpaired(long_yes_w_cart, x = "visit", y = "score",
+#             color = "class", line.color = "gray", line.size = 0.4,
+#            add = "mean_sd") +
+p <- ggviolin(df_2m_plot, x = "visit", y = "score", fill = "class",
+              add = "mean_sd") +
+  facet_grid( ~ class) + 
+  labs(x = "K6",
+       subtitle = get_test_label(aov)) +
+  stat_compare_means(label = "p", paired = T) +
+  stat_summary(fun.data = function(x) {
+    data.frame(y = -2, 
+               label = paste("Mean=", round(mean(x),2), "(",length(x)/2,")",
+                             sep = ""))
+  }, geom = "text")
+
+
+save.image("cart_yes_validation.rdata")
+
+library(xaringanBuilder)
+build_pdf("cart_yes_revalidation_slides.html")
 # summary table
 theme_gtsummary_journal(journal = "jama", set_theme = T)
 theme_gtsummary_compact()
@@ -281,4 +327,7 @@ df_model %>%
   flextable::bold(part = "header") %>% 
   flextable::font(fontname = "Arial", part = "all")
 reset_gtsummary_theme()
+
+
+
 
