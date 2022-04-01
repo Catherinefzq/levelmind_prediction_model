@@ -4,5 +4,10 @@
 .Ruserdata
 README.md
 \.html
-dat\
+dat
 hub_data_cleaning.R
+cart_yes_revalidation_slides.Rmd
+cart_yes_revalidation_slides.html
+cart_yes_revalidation_slides_files
+zoom.html
+libs
